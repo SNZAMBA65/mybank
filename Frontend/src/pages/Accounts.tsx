@@ -1,0 +1,321 @@
+import React, { useState, useEffect } from 'react';
+import { Plus, Download, CreditCard, Edit, Trash2 } from 'lucide-react';
+import { useAccountStore } from '../store/accountStore';
+import AccountCard from '../components/Accounts/AccountCard';
+import AddAccountModal from '../components/Accounts/AddAccountModal';
+
+/**
+ * Accounts Component
+ * 
+ * Comprehensive account management interface that provides:
+ * - Overview of all user accounts with visual cards
+ * - Account creation functionality with modal interface
+ * - Account editing and deletion capabilities
+ * - Financial overview with statistics (positive balance, debts, net worth)
+ * - PDF export functionality for account data
+ * - Empty states with guided actions for new users
+ * - Loading states and error handling
+ */
+const Accounts: React.FC = () => {
+  // Store hooks for account management
+  const { accounts, fetchAccounts, deleteAccount, loading } = useAccountStore();
+  
+  // Component state management
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false); // Controls add account modal visibility
+  const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null); // Tracks which account is being deleted
+  const [isExporting, setIsExporting] = useState(false); // Loading state for PDF export
+
+  /**
+   * Load accounts data on component mount
+   * Ensures fresh data is available when user navigates to this page
+   */
+  useEffect(() => {
+    fetchAccounts();
+  }, [fetchAccounts]);
+
+  /**
+   * Handle PDF export functionality
+   * Generates and downloads a PDF report of all accounts with summary statistics
+   */
+  const handleExportToPDF = async () => {
+    setIsExporting(true);
+    
+    try {
+      // ✅ Import jsPDF correctement (default export)
+      const jsPDF = (await import('jspdf')).default;
+      
+      // Create new PDF document
+      const pdf = new jsPDF();
+      const pageWidth = pdf.internal.pageSize.width;
+      const pageHeight = pdf.internal.pageSize.height;
+      
+      // PDF Header
+      pdf.setFontSize(20);
+      pdf.text('MyBank - Accounts Report', 20, 30);
+      
+      // Current date
+      pdf.setFontSize(12);
+      const currentDate = new Date().toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+      pdf.text(`Generated on: ${currentDate}`, 20, 45);
+      
+      // Summary Statistics
+      pdf.setFontSize(16);
+      pdf.text('Financial Summary', 20, 65);
+      
+      const totalPositive = accounts.reduce((sum, acc) => sum + (acc.balance > 0 ? acc.balance : 0), 0);
+      const totalDebts = Math.abs(accounts.reduce((sum, acc) => sum + (acc.balance < 0 ? acc.balance : 0), 0));
+      const netWorth = accounts.reduce((sum, acc) => sum + acc.balance, 0);
+      
+      pdf.setFontSize(12);
+      pdf.text(`Total Positive Balance: €${totalPositive.toFixed(2)}`, 20, 85);
+      pdf.text(`Total Debts: €${totalDebts.toFixed(2)}`, 20, 100);
+      pdf.text(`Net Worth: €${netWorth.toFixed(2)}`, 20, 115);
+      pdf.text(`Total Accounts: ${accounts.length}`, 20, 130);
+      
+      // Accounts Details
+      pdf.setFontSize(16);
+      pdf.text('Account Details', 20, 155);
+      
+      let yPosition = 175;
+      const lineHeight = 80; // ✅ utilisé pour espacer correctement les blocs comptes
+      
+      accounts.forEach((account, index) => {
+        // Check if we need a new page
+        if (yPosition > pageHeight - 50) {
+          pdf.addPage();
+          yPosition = 30;
+        }
+        
+        // Account type mapping
+        const getAccountTypeName = (type: string) => {
+          switch (type) {
+            case 'checking': return 'Checking Account';
+            case 'savings': return 'Savings Account';
+            case 'credit': return 'Credit Card';
+            default: return 'Account';
+          }
+        };
+        
+        // Account information
+        pdf.setFontSize(14);
+        pdf.text(`${index + 1}. ${account.name}`, 20, yPosition);
+        
+        pdf.setFontSize(12);
+        pdf.text(`Type: ${getAccountTypeName(account.type)}`, 30, yPosition + 15);
+        pdf.text(`Account Number: ${account.accountNumber || 'N/A'}`, 30, yPosition + 30);
+        pdf.text(`Balance: €${account.balance.toFixed(2)} ${account.currency}`, 30, yPosition + 45);
+        
+        // Balance status color (text only in PDF)
+        const balanceStatus = account.balance >= 0 ? '(Positive)' : '(Negative)';
+        pdf.text(`Status: ${balanceStatus}`, 30, yPosition + 60);
+        
+        yPosition += lineHeight;
+        
+        // Add separator line
+        if (index < accounts.length - 1) {
+          pdf.line(20, yPosition - 10, pageWidth - 20, yPosition - 10);
+        }
+      });
+      
+      // Footer
+      if (yPosition > pageHeight - 50) {
+        pdf.addPage();
+        yPosition = 30;
+      }
+      
+      pdf.setFontSize(10);
+      pdf.text('This report was generated by MyBank application.', 20, pageHeight - 30);
+      pdf.text('For support, contact: support@mybank.com', 20, pageHeight - 20);
+      
+      // Generate filename with current date
+      const filename = `MyBank_Accounts_Report_${new Date().toISOString().split('T')[0]}.pdf`;
+      
+      // Save the PDF
+      pdf.save(filename);
+      
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      alert('Error occurred while generating PDF. Please try again.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  /**
+   * Handle account deletion with confirmation
+   * Shows confirmation dialog and manages loading state during deletion
+   * 
+   * @param accountId - ID of the account to delete
+   * @param accountName - Name of the account for confirmation dialog
+   */
+  const handleDeleteAccount = async (accountId: string, accountName: string) => {
+    if (window.confirm(`Are you sure you want to delete the account "${accountName}"?`)) {
+      setDeletingAccountId(accountId);
+      try {
+        await deleteAccount(accountId);
+      } catch (error) {
+        console.error('Error during deletion:', error);
+        // TODO: Show user-friendly error message
+      }
+      setDeletingAccountId(null);
+    }
+  };
+
+  // Loading state - show while fetching initial data
+  if (loading && accounts.length === 0) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <div className="text-gray-600">Loading accounts...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8">
+      {/* Page Header with Actions */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">My Accounts</h1>
+          <p className="text-gray-600 mt-1">
+            Manage your bank accounts and cards ({accounts.length} account{accounts.length > 1 ? 's' : ''})
+          </p>
+        </div>
+
+        {/* Action buttons */}
+        <div className="flex space-x-3">
+          {/* PDF Export Button */}
+          <button 
+            onClick={handleExportToPDF}
+            disabled={isExporting || accounts.length === 0}
+            className="flex items-center px-4 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title={accounts.length === 0 ? "No accounts to export" : "Export accounts to PDF"}
+          >
+            <Download className="w-4 h-4 mr-2" />
+            {isExporting ? 'Generating PDF...' : 'Export PDF'}
+          </button>
+          
+          <button 
+            onClick={() => setIsAddModalOpen(true)}
+            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            New Account
+          </button>
+        </div>
+      </div>
+
+      {/* Main Content - Either empty state or account grid */}
+      {accounts.length === 0 ? (
+        /* Empty state when no accounts exist */
+        <div className="text-center py-12">
+          <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <CreditCard className="w-10 h-10 text-gray-400" />
+          </div>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No Accounts</h3>
+          <p className="text-gray-600 mb-6">Create your first account to get started</p>
+          <button 
+            onClick={() => setIsAddModalOpen(true)}
+            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Create Account
+          </button>
+        </div>
+      ) : (
+        /* Account grid with cards and hover actions */
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {accounts.map((account) => (
+            <div key={account.id} className="group">
+              {/* Account card component */}
+              <AccountCard account={account} />
+              
+              {/* Hover actions for each account */}
+              <div className="opacity-0 group-hover:opacity-100 transition-opacity mt-3 flex justify-center gap-2">
+                <button
+                  className="flex items-center px-3 py-2 text-blue-600 hover:bg-blue-100 rounded-lg text-sm transition-colors"
+                  title="Edit account"
+                >
+                  <Edit className="w-4 h-4 mr-1" />
+                  Edit
+                </button>
+                <button
+                  onClick={() => handleDeleteAccount(account.id, account.name)}
+                  disabled={deletingAccountId === account.id}
+                  className="flex items-center px-3 py-2 text-red-600 hover:bg-red-100 rounded-lg text-sm transition-colors disabled:opacity-50"
+                  title="Delete account"
+                >
+                  <Trash2 className="w-4 h-4 mr-1" />
+                  {deletingAccountId === account.id ? 'Deleting...' : 'Delete'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Financial Overview Statistics - Only shown when accounts exist */}
+      {accounts.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <h2 className="text-xl font-semibold text-gray-900 mb-6">Overview</h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Total positive balance */}
+            <div className="text-center">
+              <div className="text-3xl font-bold text-green-600">
+                {accounts.reduce((sum, acc) => sum + (acc.balance > 0 ? acc.balance : 0), 0).toFixed(2)} €
+              </div>
+              <div className="text-sm text-gray-600 mt-1">Total Positive Balance</div>
+            </div>
+            
+            {/* Total debts (negative balances) */}
+            <div className="text-center">
+              <div className="text-3xl font-bold text-red-600">
+                {Math.abs(accounts.reduce((sum, acc) => sum + (acc.balance < 0 ? acc.balance : 0), 0)).toFixed(2)} €
+              </div>
+              <div className="text-sm text-gray-600 mt-1">Total Debts</div>
+            </div>
+            
+            {/* Net worth (total balance including negative) */}
+            <div className="text-center">
+              <div className="text-3xl font-bold text-blue-600">
+                {accounts.reduce((sum, acc) => sum + acc.balance, 0).toFixed(2)} €
+              </div>
+              <div className="text-sm text-gray-600 mt-1">Net Worth</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Available Actions Section */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+        <h2 className="text-xl font-semibold text-gray-900 mb-6">Available Actions</h2>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* New account action card */}
+          <button 
+            onClick={() => setIsAddModalOpen(true)}
+            className="flex flex-col items-center p-6 rounded-lg border border-gray-200 hover:border-green-300 hover:bg-green-50 transition-colors group"
+          >
+            <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mb-3 group-hover:bg-green-200">
+              <Plus className="w-6 h-6 text-green-600" />
+            </div>
+            <h3 className="font-medium text-gray-900">New Account</h3>
+            <p className="text-sm text-gray-600 text-center mt-1">Open an account</p>
+          </button>
+        </div>
+      </div>
+
+      {/* Add Account Modal */}
+      <AddAccountModal
+        isOpen={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
+      />
+    </div>
+  );
+};
+
+export default Accounts;

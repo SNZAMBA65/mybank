@@ -1,0 +1,98 @@
+# backend/Dockerfile.prod - Version production sécurisée
+FROM php:8.3-fpm-alpine AS base
+
+# Créer un utilisateur non-root
+RUN addgroup -g 1000 -S appgroup && \
+    adduser -u 1000 -S appuser -G appgroup
+
+# Installation des extensions PHP nécessaires
+RUN apk add --no-cache --update \
+    git \
+    curl \
+    libpng-dev \
+    oniguruma-dev \
+    libxml2-dev \
+    zip \
+    unzip \
+    libzip-dev \
+    freetype-dev \
+    libjpeg-turbo-dev \
+    mysql-client \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip \
+    && apk del --purge \
+    && rm -rf /var/cache/apk/*
+
+# Installation de Composer
+COPY --from=composer:2.7 /usr/bin/composer /usr/bin/composer
+
+# Installation de Symfony CLI
+RUN curl -1sLf 'https://dl.cloudsmith.io/public/symfony/stable/setup.alpine.sh' | sh \
+    && apk add symfony-cli
+
+WORKDIR /var/www/html
+
+# Stage de build
+FROM base AS build
+
+COPY composer.json composer.lock ./
+RUN composer install --no-dev --optimize-autoloader --no-scripts
+
+COPY . .
+RUN composer dump-autoload --optimize
+
+# Stage de production
+FROM base AS production
+
+COPY --from=build --chown=appuser:appgroup /var/www/html /var/www/html
+
+USER appuser
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+
+CMD ["symfony", "server:start", "--host=0.0.0.0", "--port=8000"]
+
+---
+
+# Frontend/Dockerfile.prod - Version production sécurisée
+FROM node:20-alpine3.19 AS base
+
+# Créer un utilisateur non-root
+RUN addgroup -g 1000 -S appgroup && \
+    adduser -u 1000 -S appuser -G appgroup
+
+# Mise à jour des packages de sécurité
+RUN apk update && apk upgrade && rm -rf /var/cache/apk/*
+
+WORKDIR /app
+
+# Stage de build
+FROM base AS build
+
+COPY package*.json ./
+RUN npm ci --only=production && npm cache clean --force
+
+COPY . .
+RUN npm run build
+
+# Stage de production avec Nginx
+FROM nginx:1.25-alpine AS production
+
+# Copier les fichiers buildés
+COPY --from=build /app/dist /usr/share/nginx/html
+
+# Configuration Nginx sécurisée
+COPY nginx.conf /etc/nginx/nginx.conf
+
+# Supprimer les packages inutiles
+RUN apk del --purge && rm -rf /var/cache/apk/*
+
+EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost/ || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]

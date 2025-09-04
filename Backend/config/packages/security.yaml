@@ -1,0 +1,51 @@
+security:
+    # Hash des mots de passe
+    password_hashers:
+        Symfony\Component\Security\Core\User\PasswordAuthenticatedUserInterface: 'auto'
+
+    # Provider : permet de charger les utilisateurs par email
+    providers:
+        app_user_provider:
+            entity:
+                class: App\Entity\User
+                property: email
+
+    firewalls:
+        # Pas de sécurité sur les assets et le profiler
+        dev:
+            pattern: ^/(_(profiler|wdt)|css|images|js)/
+            security: false
+
+        # Firewall principal de l'API
+        main:
+            lazy: true
+            provider: app_user_provider
+
+            # Authentification JSON (email + password)
+            json_login:
+                check_path: /api/auth/login   # route qui reçoit le login
+                username_path: email          # clé JSON pour l'email
+                password_path: password       # clé JSON pour le mot de passe
+
+            # Déconnexion possible si tu veux plus tard
+            logout:
+                path: api_logout
+                invalidate_session: true
+
+    # Contrôles d'accès globaux
+    access_control:
+        # Routes publiques
+        - { path: ^/api/auth/login, roles: PUBLIC_ACCESS }
+        - { path: ^/api/auth/register, roles: PUBLIC_ACCESS }
+
+        # Tout le reste de l'API demande une authentification
+        - { path: ^/api, roles: ROLE_USER }
+
+when@test:
+    security:
+        password_hashers:
+            Symfony\Component\Security\Core\User\PasswordAuthenticatedUserInterface:
+                algorithm: auto
+                cost: 4       # bcrypt (le plus faible possible pour les tests)
+                time_cost: 3  # argon2 (minimum)
+                memory_cost: 10
